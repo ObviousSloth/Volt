@@ -32,3 +32,13 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+#environment
+*.env
+
+# # ignore generated files
+workout-app/
+docs/
+CLAUDE.md
+AGENTS.md
+.claude/
