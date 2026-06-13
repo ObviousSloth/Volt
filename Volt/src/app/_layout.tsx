@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { VoltColors } from '@/constants/volt-theme';
 import { AuthProvider } from '@/hooks/use-auth';
+import { RoutinesProvider } from '@/hooks/use-routines';
 import { useVoltFonts } from '@/hooks/use-volt-fonts';
 
 // Keep the native splash visible until fonts are ready. Called in global scope,
@@ -31,22 +32,26 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <View style={{ flex: 1, backgroundColor: VoltColors.bg }}>
-          <StatusBar style="light" />
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: VoltColors.bg },
-              animation: 'fade',
-            }}>
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen
-              name="exercise/[id]"
-              options={{ animation: 'slide_from_right' }}
-            />
-          </Stack>
-        </View>
+        <RoutinesProvider>
+          <View style={{ flex: 1, backgroundColor: VoltColors.bg }}>
+            <StatusBar style="light" />
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: VoltColors.bg },
+                animation: 'fade',
+              }}>
+              <Stack.Screen name="(tabs)" />
+              <Stack.Screen name="(auth)" />
+              <Stack.Screen name="exercise/[id]" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen name="builder" options={{ animation: 'slide_from_right' }} />
+              <Stack.Screen
+                name="workout/[id]"
+                options={{ animation: 'slide_from_bottom', gestureEnabled: false }}
+              />
+            </Stack>
+          </View>
+        </RoutinesProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

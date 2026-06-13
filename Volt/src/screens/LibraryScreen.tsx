@@ -17,6 +17,9 @@ import { VOLT_EQUIPMENT, VOLT_MUSCLES } from '@/lib/mockData';
 
 type Props = {
   onOpen: (exercise: ExerciseWithMedia) => void;
+  /** When true, rows show a + affordance and tapping calls onPick instead of onOpen. */
+  pickMode?: boolean;
+  onPick?: (exercise: ExerciseWithMedia) => void;
 };
 
 const EMPTY: ExerciseWithMedia[] = [];
@@ -29,7 +32,7 @@ const EMPTY: ExerciseWithMedia[] = [];
  * Phase 1: reads the local VOLT_EXERCISES. Phase 2 swaps the source for the
  * exercises table / get-exercises edge function per the API contract.
  */
-export function LibraryScreen({ onOpen }: Props) {
+export function LibraryScreen({ onOpen, pickMode = false, onPick }: Props) {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
   const [muscle, setMuscle] = useState('All');
@@ -213,7 +216,7 @@ export function LibraryScreen({ onOpen }: Props) {
           <Pressable
             key={e.id}
             accessibilityRole="button"
-            onPress={() => onOpen(e)}
+            onPress={() => (pickMode ? onPick?.(e) : onOpen(e))}
             style={({ pressed }) => ({
               flexDirection: 'row',
               alignItems: 'center',
@@ -252,7 +255,11 @@ export function LibraryScreen({ onOpen }: Props) {
                 {e.muscle} · {e.equipment}
               </VText>
             </View>
-            <VIcon name="chevron" size={17} color={VoltColors.faint} />
+            <VIcon
+              name={pickMode ? 'plus' : 'chevron'}
+              size={17}
+              color={pickMode ? VoltColors.accent : VoltColors.faint}
+            />
           </Pressable>
         ))}
         {results.length === 0 ? (
