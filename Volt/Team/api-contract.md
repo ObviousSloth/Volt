@@ -1,7 +1,7 @@
 # Volt API Contract
 
-**Version**: 1
-**Sprint**: 1 — Foundations & Exercise Library
+**Version**: 2
+**Sprint**: 2 — Routines & Workout Execution
 **Owner**: Backend Dev
 **Last updated**: 2026-06-13
 
@@ -196,9 +196,196 @@ back to cached rows.
 
 ## 6. Realtime subscriptions
 
-None in Sprint 1. `exercises` is effectively static reference data; don't
-subscribe to it. (Sprint 2 will likely add a subscription for
-`workout_sessions` — it'll be specified in contract v2.)
+None required in Sprint 2 either. The in-progress workout lives on the device
+and is persisted to Supabase as you go (section 11); you do not need a realtime
+subscription to your own session — read it back on resume (section 11.4). Skip
+realtime for now.
+
+---
+
+# Sprint 2 — Routines & Workout Execution (NEW in v2)
+
+All four tables below are **owner-only**: RLS is enabled and a user can only
+read/write their own rows. Everything goes through the authenticated Supabase
+client from section 2 (anon key + the signed-in user's JWT) — **never** a
+service role from the app. Import all row/insert/update types from
+`@/types/supabase` (regenerated, Backend-owned):
+
+```ts
+import type { Tables, TablesInsert, TablesUpdate } from '@/types/supabase';
+type Routine        = Tables<'routines'>;
+type RoutineExercise = Tables<'routine_exercises'>;
+type WorkoutSession = Tables<'workout_sessions'>;
+type WorkoutSet     = Tables<'workout_sets'>;
+```
+
+> **RLS gotcha you WILL hit — set `user_id` yourself on insert.**
+> `routines` and `workout_sessions` have `WITH CHECK (auth.uid() = user_id)`.
+> The DB does **not** auto-fill `user_id`, so an insert that omits it stores
+> `null` and is **rejected with `42501` (RLS violation)**. Always include
+> `user_id: session.user.id` in the insert. (Children — `routine_exercises`,
+> `workout_sets` — have no `user_id`; ownership is enforced via the parent, so
+> just set the correct `routine_id` / `session_id` and RLS does the rest.)
+
+## 8. Tables: routines & routine_exercises
+
+### `routines` — a user-owned named template
+
+| Column | Type (TS) | Notes |
+|---|---|---|
+| `id` | `string` | PK, uuid, server-generated (omit on insert) |
+| `user_id` | `string` | **Required on insert** = `session.user.id` |
+| `name` | `string` | ≤ 120 chars (DB CHECK + mirror with UI `maxLength`) |
+| `description` | `string \| null` | ≤ 2000 chars |
+| `position` | `number` | ordering in the Home list; integer, default `0` |
+| `created_at` | `string` | ISO, server default |
+
+### `routine_exercises` — an exercise entry in a routine (ordered)
+
+| Column | Type (TS) | Notes / DB bound |
+|---|---|---|
+| `id` | `string` | PK uuid |
+| `routine_id` | `string` | FK → `routines.id`, `on delete cascade`. Ownership comes from here |
+| `exercise_id` | `string` | FK → `exercises.id` (seed slug or ExerciseDB id) |
+| `sets` | `number` | default `3`, CHECK `1–99` |
+| `reps` | `number` | default `10`, CHECK `0–999` |
+| `weight_kg` | `number \| null` | `numeric(5,2)`, CHECK `0–999.99` (target weight; null = unset) |
+| `rest_seconds` | `number` | default `90`, CHECK `0–3600` |
+| `position` | `number` | order within the routine; reorder by updating `position` |
+| `created_at` | `string` | ISO |
+
+**Reads** (RLS already scopes to the owner — no manual `user_id` filter needed):
+
+```ts
+// Routines for the Home list, with their exercises nested
+const { data, error } = await supabase
+  .from('routines')
+  .select('*, routine_exercises(*, exercises(name, muscle, equipment, met_value))')
+  .order('position');
+```
+
+**Editing a routine never destroys workout history** — `workout_sets.exercise_id`
+points at `exercises`, not at `routine_exercises`, so changing/removing a routine
+entry leaves logged sets intact.
+
+## 9. Tables: workout_sessions & workout_sets
+
+### `workout_sessions` — one performed workout (may be in progress)
+
+| Column | Type (TS) | Notes |
+|---|---|---|
+| `id` | `string` | PK uuid |
+| `user_id` | `string` | **Required on insert** = `session.user.id` |
+| `routine_id` | `string \| null` | FK → `routines.id`, `on delete set null` (history survives routine deletion) |
+| `started_at` | `string` | ISO, default `now()`. Set explicitly when the workout begins |
+| `ended_at` | `string \| null` | `null` while in progress; set on Finish |
+| `notes` | `string \| null` | ≤ 2000 chars |
+| `created_at` | `string` | ISO |
+
+**In-progress = `ended_at is null`.** That's how the resume flow (section 11.4)
+finds a workout to recover.
+
+### `workout_sets` — one logged set (owned via its session)
+
+| Column | Type (TS) | Notes / DB bound |
+|---|---|---|
+| `id` | `string` | PK uuid |
+| `session_id` | `string` | FK → `workout_sessions.id`, `on delete cascade`. Ownership comes from here |
+| `exercise_id` | `string` | FK → `exercises.id` |
+| `set_number` | `number` | CHECK `1–99` (required) |
+| `reps` | `number \| null` | CHECK `0–999` |
+| `weight_kg` | `number \| null` | `numeric(5,2)`, CHECK `0–999.99`. **Bodyweight = `0`, not `null`/NaN** |
+| `completed_at` | `string \| null` | `null` until the set's checkmark is ticked; set to ISO on completion |
+| `created_at` | `string` | ISO |
+
+A set "counts" as done when `completed_at` is non-null. The previous-performance
+query (section 10) only considers sets with `completed_at` set.
+
+## 10. Previous-performance query (RPC `previous_exercise_sets`)
+
+Use this for the live workout's **PREV** column: the sets the user did for this
+exercise in their **most recent prior completed workout**, excluding the workout
+currently in progress.
+
+```ts
+const { data, error } = await supabase.rpc('previous_exercise_sets', {
+  p_exercise_id: exerciseId,          // required, text — exercises.id
+  p_exclude_session: currentSessionId // optional, uuid — pass the in-progress session id
+});
+// data: Array<{ session_id, started_at, set_number, reps, weight_kg, completed_at }>
+// ordered by set_number asc; [] when there is no prior history.
+```
+
+- **RLS-safe / no cross-user leakage:** the function is `SECURITY INVOKER`, so it
+  runs under the caller's RLS and additionally filters on `auth.uid()` — it can
+  only ever return the caller's own sets. Anon cannot execute it (authenticated
+  only).
+- **Excludes the current session:** pass `p_exclude_session = currentSessionId`
+  so the live workout never appears as its own "previous". Omit it (or pass
+  `null`) to get the most recent completed workout overall.
+- Returns the sets of exactly one prior session (the most recent one that has a
+  completed set for that exercise). `[]` if none — render an empty PREV column.
+
+(Types: the RPC isn't in the generated `Tables<>` — the row shape is exactly the
+list above. `supabase.rpc('previous_exercise_sets', …)` returns it.)
+
+## 11. In-progress session persistence (survive background / kill)
+
+Write as you go so an OS kill or backgrounding never loses the workout. All
+writes use the authenticated client (RLS applies). **Await or `.catch` every
+write** — do not fire-and-forget (a dropped write loses a logged set).
+
+**11.1 On Start** — insert the session (remember `user_id`!):
+
+```ts
+const { data: s, error } = await supabase
+  .from('workout_sessions')
+  .insert({ user_id: session.user.id, routine_id, started_at: new Date().toISOString() })
+  .select()
+  .single();
+const sessionId = s.id; // keep this; it's the key for every set write
+```
+
+**11.2 On each set completion** — upsert the set. Use a stable client-generated
+`id` (e.g. `crypto.randomUUID()`) per set row so re-saving an edited set updates
+rather than duplicates:
+
+```ts
+const { error } = await supabase
+  .from('workout_sets')
+  .upsert({
+    id: setRowId,            // stable per (exercise, set_number) in this session
+    session_id: sessionId,
+    exercise_id,
+    set_number,
+    reps,
+    weight_kg,               // 0 for bodyweight, never null/NaN
+    completed_at: done ? new Date().toISOString() : null,
+  });
+if (error) { /* surface + retry; do NOT swallow */ }
+```
+
+**11.3 On Finish** — stamp `ended_at`:
+
+```ts
+await supabase.from('workout_sessions')
+  .update({ ended_at: new Date().toISOString(), notes })
+  .eq('id', sessionId);
+```
+
+**11.4 On app reopen (resume flow)** — look for an unfinished session and rehydrate:
+
+```ts
+const { data: open } = await supabase
+  .from('workout_sessions')
+  .select('*, workout_sets(*)')
+  .is('ended_at', null)
+  .order('started_at', { ascending: false })
+  .limit(1)
+  .maybeSingle();
+// open === null → nothing to resume. Otherwise rebuild the live workout from
+// open + open.workout_sets (RLS guarantees it's the user's own).
+```
 
 ## 7. Backend-owned vs Frontend-owned
 
@@ -209,5 +396,11 @@ subscribe to it. (Sprint 2 will likely add a subscription for
 
 ## Changelog
 
+- **v2** (2026-06-13): Sprint 2 — added `routines`, `routine_exercises`,
+  `workout_sessions`, `workout_sets` (owner-only RLS + DB CHECK bounds), the
+  `previous_exercise_sets` RPC, and the in-progress session-persistence flow.
+  Flagged the "set `user_id` on insert or hit `42501`" RLS gotcha. Regenerated
+  types. All table reads/writes verified live against RLS (cross-user isolation,
+  bounds, RPC correctness incl. current-session exclusion).
 - **v1** (2026-06-13): initial contract — exercises table, auth, get-exercises
   edge function, generated types.
