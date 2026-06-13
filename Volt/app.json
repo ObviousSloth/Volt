@@ -12,6 +12,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.volt.app",
       "adaptiveIcon": {
         "backgroundColor": "#08090B",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
