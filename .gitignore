@@ -35,6 +35,12 @@ google-services.json
 
 #environment
 *.env
+.env
+.env.*
+!.env.example
+
+# Verification scratch (may contain real session JWTs — never commit)
+.verify_tmp/
 
 # # ignore generated files
 workout-app/
@@ -42,3 +48,5 @@ docs/
 CLAUDE.md
 AGENTS.md
 .claude/
+Team/
+/Volt/Team
