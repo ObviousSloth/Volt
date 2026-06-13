@@ -1,15 +1,53 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
-import { useColorScheme } from 'react-native';
+import { Stack } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
+import { View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
-import AppTabs from '@/components/app-tabs';
+import { VoltColors } from '@/constants/volt-theme';
+import { AuthProvider } from '@/hooks/use-auth';
+import { useVoltFonts } from '@/hooks/use-volt-fonts';
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
+// Keep the native splash visible until fonts are ready. Called in global scope,
+// not awaited, per the Expo SDK 56 splash-screen guidance.
+SplashScreen.preventAutoHideAsync();
+
+export default function RootLayout() {
+  const [fontsLoaded, fontError] = useVoltFonts();
+
+  useEffect(() => {
+    if (fontsLoaded || fontError) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, fontError]);
+
+  // Block first paint until fonts resolve (loaded or errored) so text never flashes
+  // in a fallback family.
+  if (!fontsLoaded && !fontError) {
+    return null;
+  }
+
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <AnimatedSplashOverlay />
-      <AppTabs />
-    </ThemeProvider>
+    <SafeAreaProvider>
+      <AuthProvider>
+        <View style={{ flex: 1, backgroundColor: VoltColors.bg }}>
+          <StatusBar style="light" />
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: VoltColors.bg },
+              animation: 'fade',
+            }}>
+            <Stack.Screen name="(tabs)" />
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen
+              name="exercise/[id]"
+              options={{ animation: 'slide_from_right' }}
+            />
+          </Stack>
+        </View>
+      </AuthProvider>
+    </SafeAreaProvider>
   );
 }
