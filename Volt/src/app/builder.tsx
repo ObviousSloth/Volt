@@ -15,9 +15,9 @@ export default function BuilderRoute() {
     else router.replace('/(tabs)');
   };
 
-  const handleSave = (draft: RoutineDraft) => {
-    if (routine) updateRoutine(routine.id, draft);
-    else createRoutine(draft);
+  const handleSave = async (draft: RoutineDraft) => {
+    if (routine) await updateRoutine(routine.id, draft);
+    else await createRoutine(draft);
     goBack();
   };
 

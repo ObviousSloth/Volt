@@ -1,28 +1,32 @@
 /**
- * Routines store.
+ * Routines store — wired to Supabase per api-contract v2 §8.
  *
- * Phase 1: in-memory state seeded from mock data (shaped like volt-data.js), mirroring
- * the prototype's App-level routine state (save/duplicate). Phase 2 (after api-contract
- * v2): back these operations with Supabase `routines` / `routine_exercises` queries.
+ * Loads the owner's routines (RLS-scoped) on mount and persists create/update/
+ * duplicate. Local state mirrors the server so the Home list updates immediately;
+ * reload() refetches the source of truth.
  *
- * History-preservation note (Section 2 acceptance criterion): editing a routine only
- * mutates the routine and its routine_exercises — it must NEVER touch
- * workout_sessions / workout_sets. The Phase 2 implementation updates routine rows
- * in place; past workout history references its own session/set rows and is untouched.
+ * History-preservation (Section 2 acceptance criterion): editing only rewrites the
+ * routine + its routine_exercises. workout_sets reference exercises, not
+ * routine_exercises, so past workout history is never touched. See routinesApi.ts.
  */
 import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from 'react';
 
-import { VOLT_ROUTINES } from '@/lib/mockData';
+import {
+  createRoutineRemote,
+  duplicateRoutineRemote,
+  fetchRoutines,
+  updateRoutineRemote,
+} from '@/lib/routinesApi';
 import type { Routine, RoutineExercise } from '@/lib/types';
 
-/** The editable shape the Builder produces. */
 export type RoutineDraft = {
   name: string;
   exercises: RoutineExercise[];
@@ -30,70 +34,82 @@ export type RoutineDraft = {
 
 type RoutinesContextValue = {
   routines: Routine[];
+  loading: boolean;
+  error: string | null;
+  reload: () => void;
   getRoutine: (id: string) => Routine | undefined;
-  /** Create a new routine, returns its id. */
-  createRoutine: (draft: RoutineDraft) => string;
-  /** Update an existing routine's name + exercises (history is preserved). */
-  updateRoutine: (id: string, draft: RoutineDraft) => void;
-  /** Duplicate a routine ("(copy)" suffix), returns the new id. */
-  duplicateRoutine: (id: string) => string | undefined;
+  createRoutine: (draft: RoutineDraft) => Promise<void>;
+  updateRoutine: (id: string, draft: RoutineDraft) => Promise<void>;
+  duplicateRoutine: (id: string) => Promise<void>;
 };
 
 const RoutinesContext = createContext<RoutinesContextValue | null>(null);
 
-function makeId(): string {
-  return `r${Date.now()}${Math.floor(Math.random() * 1000)}`;
-}
-
 export function RoutinesProvider({ children }: { children: ReactNode }) {
-  // Clone the mock seed so edits don't mutate the shared module array.
-  const [routines, setRoutines] = useState<Routine[]>(() =>
-    VOLT_ROUTINES.map((r) => ({ ...r, exercises: r.exercises.map((e) => ({ ...e })) })),
+  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
+
+  useEffect(() => {
+    let active = true;
+    fetchRoutines().then((res) => {
+      if (!active) return;
+      if (res.ok) {
+        setRoutines(res.value);
+        setError(null);
+      } else {
+        setError(res.message);
+      }
+      setLoading(false);
+    });
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
+
+  const getRoutine = useCallback((id: string) => routines.find((r) => r.id === id), [routines]);
+
+  const createRoutine = useCallback(
+    async (draft: RoutineDraft) => {
+      const res = await createRoutineRemote(draft, routines.length);
+      if (res.ok) setRoutines((rs) => [...rs, res.value]);
+      else setError(res.message);
+    },
+    [routines.length],
   );
 
-  const getRoutine = useCallback(
-    (id: string) => routines.find((r) => r.id === id),
-    [routines],
-  );
-
-  const createRoutine = useCallback((draft: RoutineDraft) => {
-    const id = makeId();
-    setRoutines((rs) => [
-      ...rs,
-      { id, name: draft.name, focus: 'Custom', lastDone: 'never', exercises: draft.exercises },
-    ]);
-    return id;
-  }, []);
-
-  const updateRoutine = useCallback((id: string, draft: RoutineDraft) => {
-    setRoutines((rs) =>
-      rs.map((r) => (r.id === id ? { ...r, name: draft.name, exercises: draft.exercises } : r)),
-    );
+  const updateRoutine = useCallback(async (id: string, draft: RoutineDraft) => {
+    const res = await updateRoutineRemote(id, draft);
+    if (res.ok) setRoutines((rs) => rs.map((r) => (r.id === id ? { ...r, ...res.value } : r)));
+    else setError(res.message);
   }, []);
 
   const duplicateRoutine = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const source = routines.find((r) => r.id === id);
-      if (!source) return undefined;
-      const newId = makeId();
-      setRoutines((rs) => [
-        ...rs,
-        {
-          ...source,
-          id: newId,
-          name: `${source.name} (copy)`,
-          lastDone: 'never',
-          exercises: source.exercises.map((e) => ({ ...e })),
-        },
-      ]);
-      return newId;
+      if (!source) return;
+      const res = await duplicateRoutineRemote(source, routines.length);
+      if (res.ok) setRoutines((rs) => [...rs, res.value]);
+      else setError(res.message);
     },
     [routines],
   );
 
   const value = useMemo<RoutinesContextValue>(
-    () => ({ routines, getRoutine, createRoutine, updateRoutine, duplicateRoutine }),
-    [routines, getRoutine, createRoutine, updateRoutine, duplicateRoutine],
+    () => ({
+      routines,
+      loading,
+      error,
+      reload,
+      getRoutine,
+      createRoutine,
+      updateRoutine,
+      duplicateRoutine,
+    }),
+    [routines, loading, error, reload, getRoutine, createRoutine, updateRoutine, duplicateRoutine],
   );
 
   return <RoutinesContext.Provider value={value}>{children}</RoutinesContext.Provider>;

@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { VoltColors, VoltFonts } from '@/constants/volt-theme';
@@ -33,7 +33,7 @@ function todayLabel(): string {
 export function HomeScreen({ onStart, onEdit, onNewRoutine }: Props) {
   const insets = useSafeAreaInsets();
   const { signOut } = useAuth();
-  const { routines, duplicateRoutine } = useRoutines();
+  const { routines, loading, error, duplicateRoutine } = useRoutines();
 
   return (
     <ScrollView
@@ -70,6 +70,29 @@ export function HomeScreen({ onStart, onEdit, onNewRoutine }: Props) {
       </View>
 
       <VHeading label="My routines" action="+ New" onAction={onNewRoutine} />
+
+      {loading ? (
+        <View style={{ paddingTop: 32, alignItems: 'center' }}>
+          <ActivityIndicator color={VoltColors.accent} />
+        </View>
+      ) : null}
+
+      {!loading && error ? (
+        <View style={{ paddingHorizontal: 20 }}>
+          <VText style={{ fontSize: 14, color: VoltColors.faint }}>
+            Couldn’t load your routines. Pull to retry or check your connection.
+          </VText>
+        </View>
+      ) : null}
+
+      {!loading && !error && routines.length === 0 ? (
+        <View style={{ paddingHorizontal: 20 }}>
+          <VText style={{ fontSize: 14, color: VoltColors.faint }}>
+            No routines yet. Tap “+ New” to build your first one.
+          </VText>
+        </View>
+      ) : null}
+
       <View style={{ gap: 10, paddingHorizontal: 16 }}>
         {routines.map((r) => {
           const { exerciseCount, totalSets, kcal } = routineStats(r);

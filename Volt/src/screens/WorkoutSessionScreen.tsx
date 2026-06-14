@@ -10,13 +10,27 @@ import { VText } from '@/components/ui/VText';
 import { useRestTimer } from '@/hooks/use-rest-timer';
 import { useWorkoutSession } from '@/hooks/use-workout-session';
 import { VOLT_LAST, voltExerciseById } from '@/lib/mockData';
-import type { Routine } from '@/lib/types';
+import type { LoggedSet, Routine } from '@/lib/types';
 import type { WorkoutStats } from '@/lib/workoutSession';
+
+export type SetToggleInfo = {
+  exerciseId: string;
+  exerciseIndex: number;
+  setIndex: number;
+  setNumber: number;
+  reps: number;
+  weightKg: number;
+  done: boolean;
+};
 
 type Props = {
   routine: Routine;
   onFinish: (stats: WorkoutStats) => void;
   onAbort: () => void;
+  /** PREV column source (Phase 2: backend previous-performance). Falls back to mock. */
+  previousByExercise?: Record<string, LoggedSet[]>;
+  /** Fired after a set's done flag toggles, with the resulting set values (Phase 2 persist). */
+  onSetToggled?: (info: SetToggleInfo) => void;
 };
 
 /**
@@ -28,14 +42,35 @@ type Props = {
  * Phase 1: previous performance from mock VOLT_LAST. Phase 2 swaps it for the
  * backend previous-performance query and persists the session per api-contract v2.
  */
-export function WorkoutSessionScreen({ routine, onFinish, onAbort }: Props) {
+export function WorkoutSessionScreen({
+  routine,
+  onFinish,
+  onAbort,
+  previousByExercise,
+  onSetToggled,
+}: Props) {
   const insets = useSafeAreaInsets();
   const session = useWorkoutSession(routine);
   const restTimer = useRestTimer({ paused: session.paused });
 
   const onToggleSet = (ei: number, si: number) => {
+    const prevDone = session.logs[ei]?.sets[si]?.done ?? false;
     const restSeconds = session.toggleSet(ei, si);
     if (restSeconds && restSeconds > 0) restTimer.start(restSeconds);
+
+    const log = session.logs[ei];
+    const set = log?.sets[si];
+    if (log && set && onSetToggled) {
+      onSetToggled({
+        exerciseId: log.exId,
+        exerciseIndex: ei,
+        setIndex: si,
+        setNumber: si + 1,
+        reps: set.reps,
+        weightKg: set.weight,
+        done: !prevDone, // toggleSet flips it; report the new value
+      });
+    }
   };
 
   return (
@@ -92,7 +127,8 @@ export function WorkoutSessionScreen({ routine, onFinish, onAbort }: Props) {
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 120, gap: 12 }}>
         {session.logs.map((log, ei) => {
           const ex = voltExerciseById(log.exId);
-          const last = VOLT_LAST[log.exId];
+          // Prefer the backend previous-performance (Phase 2); fall back to mock.
+          const prevSets = previousByExercise?.[log.exId] ?? VOLT_LAST[log.exId]?.sets;
           const doneCount = log.sets.filter((s) => s.done).length;
           const allDone = doneCount === log.sets.length;
           return (
@@ -156,7 +192,7 @@ export function WorkoutSessionScreen({ routine, onFinish, onAbort }: Props) {
                   reps={set.reps}
                   weightKg={set.weight}
                   completed={set.done}
-                  prev={last?.sets[si]}
+                  prev={prevSets?.[si]}
                   onToggleDone={() => onToggleSet(ei, si)}
                   onChangeReps={(reps) => session.patchSet(ei, si, { reps })}
                   onChangeWeight={(weight) => session.patchSet(ei, si, { weight })}

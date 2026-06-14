@@ -16,7 +16,7 @@ import type { Routine, RoutineExercise } from '@/lib/types';
 type Props = {
   /** Existing routine when editing; undefined when creating. */
   routine?: Routine;
-  onSave: (draft: RoutineDraft) => void;
+  onSave: (draft: RoutineDraft) => void | Promise<void>;
   onBack: () => void;
 };
 
@@ -38,6 +38,17 @@ export function RoutineBuilderScreen({ routine, onSave, onBack }: Props) {
     routine ? routine.exercises.map((e) => ({ ...e })) : [],
   );
   const [picking, setPicking] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await onSave({ name: name.trim() || 'Untitled', exercises: items });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const update = (i: number, patch: Partial<RoutineExercise>) =>
     setItems((arr) => arr.map((it, j) => (j === i ? { ...it, ...patch } : it)));
@@ -236,7 +247,8 @@ export function RoutineBuilderScreen({ routine, onSave, onBack }: Props) {
           label="Save routine"
           size="lg"
           disabled={items.length === 0 || name.trim() === ''}
-          onPress={() => onSave({ name: name.trim() || 'Untitled', exercises: items })}
+          loading={saving}
+          onPress={handleSave}
         />
       </View>
     </View>
